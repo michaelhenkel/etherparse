@@ -110,6 +110,9 @@ fn test_debug_write() {
         let value = PacketHeaders{
             link: None,
             vlan: None,
+            mpls: None,
+            mpls_ip: None,
+            mpls_transport: None,
             ip: None,
             /*ip_extensions: [
                 None, None, None, None, None,

@@ -133,7 +133,10 @@ impl PacketBuilder {
                 }),
                 vlan_header: None,
                 ip_header: None,
-                transport_header: None
+                transport_header: None,
+                mpls_header: None,
+                mpls_ip_header: None,
+                mpls_transport_header: None,
             },
             _marker: marker::PhantomData::<Ethernet2Header>{}
         }
@@ -171,7 +174,10 @@ impl PacketBuilder {
                 ethernet2_header: None,
                 vlan_header: None,
                 ip_header: None,
-                transport_header: None
+                transport_header: None,
+                mpls_header: None,
+                mpls_ip_header: None,
+                mpls_transport_header: None,
             },
             _marker: marker::PhantomData::<Ethernet2Header>{}
         }.ipv4(source, destination, time_to_live)
@@ -213,7 +219,10 @@ impl PacketBuilder {
                 ethernet2_header: None,
                 vlan_header: None,
                 ip_header: None,
-                transport_header: None
+                transport_header: None,
+                mpls_header: None,
+                mpls_ip_header: None,
+                mpls_transport_header: None,
             },
             _marker: marker::PhantomData::<Ethernet2Header>{}
         }.ipv6(source, destination, hop_limit)
@@ -289,18 +298,24 @@ impl PacketBuilder {
                 ethernet2_header: None,
                 vlan_header: None,
                 ip_header: None,
-                transport_header: None
+                transport_header: None,
+                mpls_header: None,
+                mpls_ip_header: None,
+                mpls_transport_header: None,
             },
             _marker: marker::PhantomData::<Ethernet2Header>{}
         }.ip(ip_header)
     }
 }
 
-struct PacketImpl {
+pub struct PacketImpl {
     ethernet2_header: Option<Ethernet2Header>,
     ip_header: Option<IpHeader>,
     vlan_header: Option<VlanHeader>,
-    transport_header: Option<TransportHeader>
+    transport_header: Option<TransportHeader>,
+    mpls_header: Option<MplsHeader>,
+    mpls_ip_header: Option<IpHeader>,
+    mpls_transport_header: Option<TransportHeader>,
 }
 
 ///An unfinished packet that is build with the packet builder
@@ -1161,6 +1176,20 @@ impl PacketBuilderStep<IpHeader> {
         }
     }
 
+    pub fn udp_mpls(mut self, source_port: u16, destination_port: u16) -> PacketBuilderStep<UdpHeader> {
+        self.state.mpls_transport_header = Some(TransportHeader::Udp(UdpHeader{
+            source_port,
+            destination_port,
+            length: 0, //calculated later
+            checksum: 0 //calculated later
+        }));
+        //return for next step
+        PacketBuilderStep {
+            state: self.state,
+            _marker: marker::PhantomData::<UdpHeader>{}
+        }
+    }
+
     /// Adds an TCP header.
     ///
     /// # Example
@@ -1193,6 +1222,17 @@ impl PacketBuilderStep<IpHeader> {
     /// ```
     pub fn tcp(mut self, source_port: u16, destination_port: u16, sequence_number: u32, window_size: u16) -> PacketBuilderStep<TcpHeader> {
         self.state.transport_header = Some(TransportHeader::Tcp(
+            TcpHeader::new(source_port, destination_port, sequence_number, window_size)
+        ));
+        //return for next step
+        PacketBuilderStep {
+            state: self.state,
+            _marker: marker::PhantomData::<TcpHeader>{}
+        }
+    }
+
+    pub fn tcp_mpls(mut self, source_port: u16, destination_port: u16, sequence_number: u32, window_size: u16) -> PacketBuilderStep<TcpHeader> {
+        self.state.mpls_transport_header = Some(TransportHeader::Tcp(
             TcpHeader::new(source_port, destination_port, sequence_number, window_size)
         ));
         //return for next step
@@ -1244,8 +1284,80 @@ impl PacketBuilderStep<Icmpv6Header> {
 }
 
 impl PacketBuilderStep<UdpHeader> {
+
+    pub fn mpls(mut self, mpls_header: MplsHeader) -> PacketBuilderStep<MplsHeader>{
+        self.state.mpls_header = Some(mpls_header);
+        //return for next step
+        PacketBuilderStep {
+            state: self.state,
+            _marker: marker::PhantomData::<MplsHeader>{}
+        }
+    }
+
     ///Write all the headers and the payload.
     pub fn write<T: io::Write + Sized>(self, writer: &mut T, payload: &[u8]) -> Result<(),WriteError> {
+        final_write(self, writer, payload)
+    }
+
+    ///Returns the size of the packet when it is serialized
+    pub fn size(&self, payload_size: usize) -> usize {
+        final_size(self, payload_size)
+    }
+}
+
+impl PacketBuilderStep<MplsHeader> {
+
+    pub fn ipv4(mut self, source: [u8;4], destination: [u8;4], time_to_live: u8) -> PacketBuilderStep<IpHeader> {
+        //add ip header
+        self.state.mpls_ip_header = Some(IpHeader::Version4({
+            let mut value: Ipv4Header = Default::default();
+            value.source = source;
+            value.destination = destination;
+            value.time_to_live = time_to_live;
+            value
+        }, Default::default()));
+        //return for next step
+        PacketBuilderStep {
+            state: self.state,
+            _marker: marker::PhantomData::<IpHeader>{}
+        }
+    }
+
+    pub fn ip(mut self, ip_header: IpHeader) -> PacketBuilderStep<IpHeader> {
+        //add ip header
+        self.state.mpls_ip_header = Some(ip_header);
+        //return for next step
+        PacketBuilderStep {
+            state: self.state,
+            _marker: marker::PhantomData::<IpHeader>{}
+        }
+    }
+
+    pub fn ipv6(mut self, source: [u8;16], destination: [u8;16], hop_limit: u8) -> PacketBuilderStep<IpHeader> {
+        self.state.mpls_ip_header = Some(IpHeader::Version6(Ipv6Header{
+            traffic_class: 0,
+            flow_label: 0,
+            payload_length: 0, //filled in on write
+            next_header: 0, //filled in on write
+            hop_limit,
+            source,
+            destination
+        }, Default::default()));
+        
+        //return for next step
+        PacketBuilderStep {
+            state: self.state,
+            _marker: marker::PhantomData::<IpHeader>{}
+        }
+    }
+
+    /// Write all the headers and the payload with the given ip number.
+    ///
+    /// `last_next_header_ip_number` will be set in the last extension header
+    /// or if no extension header exists the ip header as the "next header" or
+    /// "protocol number".
+    pub fn write<T: io::Write + Sized>(mut self, writer: &mut T, last_next_header_ip_number: u8, payload: &[u8]) -> Result<(),WriteError> {
+        self.state.ip_header.as_mut().unwrap().set_next_headers(last_next_header_ip_number);
         final_write(self, writer, payload)
     }
 
@@ -1259,35 +1371,61 @@ impl PacketBuilderStep<TcpHeader> {
 
     ///Set ns flag (ECN-nonce - concealment protection; experimental: see RFC 3540)
     pub fn ns(mut self) -> PacketBuilderStep<TcpHeader> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().ns = true;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().ns = true;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().ns = true;
+        }
         self
     }
     ///Set fin flag (No more data from sender)
     pub fn fin(mut self) -> PacketBuilderStep<TcpHeader> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().fin = true;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().fin = true;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().fin = true;
+        }
         self
     }
     ///Set the syn flag (synchronize sequence numbers)
     pub fn syn(mut self) -> PacketBuilderStep<TcpHeader> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().syn = true;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().syn = true;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().syn = true;
+        }
         self
     }
     ///Sets the rst flag (reset the connection)
     pub fn rst(mut self) -> PacketBuilderStep<TcpHeader> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().rst = true;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().rst = true;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().rst = true;
+        }
         self
     }
     ///Sets the psh flag (push function)
     pub fn psh(mut self) -> PacketBuilderStep<TcpHeader> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().psh = true;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().psh = true;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().psh = true;
+        }
         self
     }
     ///Sets the ack flag and the acknowledgment_number.
     pub fn ack(mut self, acknowledgment_number: u32) -> PacketBuilderStep<TcpHeader> {
-        {
-            let header = self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap();
-            header.ack = true;
-            header.acknowledgment_number = acknowledgment_number;
+        {   
+            if self.state.mpls_transport_header.is_some(){
+                let header = self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap();
+                header.ack = true;
+                header.acknowledgment_number = acknowledgment_number;
+            } else {
+                let header = self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap();
+                header.ack = true;
+                header.acknowledgment_number = acknowledgment_number;
+            }
         }
         self
     }
@@ -1297,15 +1435,25 @@ impl PacketBuilderStep<TcpHeader> {
     ///the urgent data.
     pub fn urg(mut self, urgent_pointer: u16) -> PacketBuilderStep<TcpHeader> {
         {
-            let header = self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap();
-            header.urg = true;
-            header.urgent_pointer = urgent_pointer;
+            if self.state.mpls_transport_header.is_some(){
+                let header = self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap();
+                header.urg = true;
+                header.urgent_pointer = urgent_pointer;
+            } else {
+                let header = self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap();
+                header.urg = true;
+                header.urgent_pointer = urgent_pointer;
+            }
         }
         self
     }
     ///Sets ece flag (ECN-Echo, RFC 3168)
     pub fn ece(mut self) -> PacketBuilderStep<TcpHeader> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().ece = true;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().ece = true;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().ece = true;
+        }
         self
     }
 
@@ -1313,19 +1461,31 @@ impl PacketBuilderStep<TcpHeader> {
     ///
     ///This flag is set by the sending host to indicate that it received a TCP segment with the ECE flag set and had responded in congestion control mechanism (added to header by RFC 3168).
     pub fn cwr(mut self) -> PacketBuilderStep<TcpHeader> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().cwr = true;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().cwr = true;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().cwr = true;
+        }
         self
     }
 
     ///Set the tcp options of the header.
     pub fn options(mut self, options: &[TcpOptionElement]) -> Result<PacketBuilderStep<TcpHeader>, TcpOptionWriteError> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().set_options(options)?;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().set_options(options)?;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().set_options(options)?;
+        }
         Ok(self)
     }
 
     ///Set the tcp options of the header (setting the bytes directly).
     pub fn options_raw(mut self, options: &[u8]) -> Result<PacketBuilderStep<TcpHeader>, TcpOptionWriteError> {
-        self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().set_options_raw(options)?;
+        if self.state.mpls_transport_header.is_some(){
+            self.state.mpls_transport_header.as_mut().unwrap().mut_tcp().unwrap().set_options_raw(options)?;
+        } else {
+            self.state.transport_header.as_mut().unwrap().mut_tcp().unwrap().set_options_raw(options)?;
+        }
         Ok(self)
     }
 
@@ -1392,7 +1552,6 @@ fn final_write<T: io::Write + Sized, B>(builder: PacketBuilderStep<B>, writer: &
     use crate::IpHeader::*;
     let ip_header = builder.state.ip_header.unwrap();
 
-    //transport header
     let transport = builder.state.transport_header;
     match transport {
         None => {
@@ -1416,7 +1575,16 @@ fn final_write<T: io::Write + Sized, B>(builder: PacketBuilderStep<B>, writer: &
             match ip_header {
                 Version4(mut ip, mut ext) => {
                     //set total length & udp payload length (ip checks that the payload length is ok)
-                    let transport_size = transport.header_len() + payload.len();
+                    let mut transport_size = transport.header_len() + payload.len();
+                    if let Some(mpls_header) = builder.state.mpls_header.as_ref() {
+                        transport_size = transport_size + mpls_header.header_len();
+                    }
+                    if let Some(mpls_ip_header) = builder.state.mpls_ip_header.as_ref() {
+                        transport_size = transport_size + mpls_ip_header.header_len();
+                    }
+                    if let Some(mpls_transport_header) = builder.state.mpls_transport_header.as_ref() {
+                        transport_size = transport_size + mpls_transport_header.header_len();
+                    }
                     ip.set_payload_len(ext.header_len() + transport_size)?;
                     use crate::TransportHeader::*;
                     match transport {
@@ -1425,7 +1593,7 @@ fn final_write<T: io::Write + Sized, B>(builder: PacketBuilderStep<B>, writer: &
                         Udp(ref mut udp) => { udp.length = transport_size as u16; }
                         Tcp(_) => {},
                     }
-        
+                
                     //ip protocol number & next header values of the extension header
                     ip.protocol = ext.set_next_headers(
                         match transport {
@@ -1435,17 +1603,26 @@ fn final_write<T: io::Write + Sized, B>(builder: PacketBuilderStep<B>, writer: &
                             Tcp(_) => ip_number::TCP
                         }
                     );
-        
+                
                     //calculate the udp checksum
                     transport.update_checksum_ipv4(&ip, payload)?;
-        
+                
                     //write (will automatically calculate the checksum)
                     ip.write(writer)?;
                     ext.write(writer, ip.protocol)?;
                 },
                 Version6(mut ip, mut ext) => {
                     //set total length
-                    let transport_size = transport.header_len() + payload.len();
+                    let mut transport_size = transport.header_len() + payload.len();
+                    if let Some(mpls_header) = builder.state.mpls_header.as_ref() {
+                        transport_size = transport_size + mpls_header.header_len();
+                    }
+                    if let Some(mpls_ip_header) = builder.state.mpls_ip_header.as_ref() {
+                        transport_size = transport_size + mpls_ip_header.header_len();
+                    }
+                    if let Some(mpls_transport_header) = builder.state.mpls_transport_header.as_ref() {
+                        transport_size = transport_size + mpls_transport_header.header_len();
+                    }
                     ip.set_payload_length(ext.header_len() + transport_size)?;
                     use crate::TransportHeader::*;
                     match transport {
@@ -1454,7 +1631,7 @@ fn final_write<T: io::Write + Sized, B>(builder: PacketBuilderStep<B>, writer: &
                         Udp(ref mut udp) => { udp.length = transport_size as u16; }
                         Tcp(_) => {}
                     }
-        
+                
                     //set the protocol
                     ip.next_header = ext.set_next_headers(
                         match transport {
@@ -1464,10 +1641,10 @@ fn final_write<T: io::Write + Sized, B>(builder: PacketBuilderStep<B>, writer: &
                             Tcp(_) => ip_number::TCP
                         }
                     );
-        
+                
                     //calculate the udp checksum
                     transport.update_checksum_ipv6(&ip, payload)?;
-        
+                
                     //write (will automatically calculate the checksum)
                     ip.write(writer)?;
                     ext.write(writer, ip.next_header)?;
@@ -1477,6 +1654,73 @@ fn final_write<T: io::Write + Sized, B>(builder: PacketBuilderStep<B>, writer: &
             //finaly write the udp header & payload
             transport.write(writer)?;
         },
+    }
+
+    if let Some(mpls_header) = builder.state.mpls_header{
+        let mut mpls_transport_header = builder.state.mpls_transport_header.unwrap();
+        let mpls_ip_header = builder.state.mpls_ip_header.unwrap();
+        mpls_header.write(writer)?;
+        match mpls_ip_header {
+            Version4(mut ip, mut ext) => {
+                //set total length & udp payload length (ip checks that the payload length is ok)
+                let transport_size = mpls_transport_header.header_len() + payload.len();
+                ip.set_payload_len(ext.header_len() + transport_size)?;
+                use crate::TransportHeader::*;
+                match mpls_transport_header {
+                    Icmpv4(_) => {},
+                    Icmpv6(_) => {},
+                    Udp(ref mut udp) => { udp.length = transport_size as u16; }
+                    Tcp(_) => {},
+                }
+            
+                //ip protocol number & next header values of the extension header
+                ip.protocol = ext.set_next_headers(
+                    match mpls_transport_header {
+                        Icmpv4(_) => ip_number::ICMP,
+                        Icmpv6(_) => ip_number::IPV6_ICMP,
+                        Udp(_) => ip_number::UDP,
+                        Tcp(_) => ip_number::TCP
+                    }
+                );
+            
+                //calculate the udp checksum
+                mpls_transport_header.update_checksum_ipv4(&ip, payload)?;
+            
+                //write (will automatically calculate the checksum)
+                ip.write(writer)?;
+                ext.write(writer, ip.protocol)?;
+            },
+            Version6(mut ip, mut ext) => {
+                //set total length
+                let transport_size = mpls_transport_header.header_len() + payload.len();
+                ip.set_payload_length(ext.header_len() + transport_size)?;
+                use crate::TransportHeader::*;
+                match mpls_transport_header {
+                    Icmpv4(_) => {},
+                    Icmpv6(_) => {},
+                    Udp(ref mut udp) => { udp.length = transport_size as u16; }
+                    Tcp(_) => {}
+                }
+            
+                //set the protocol
+                ip.next_header = ext.set_next_headers(
+                    match mpls_transport_header {
+                        Icmpv4(_) => ip_number::ICMP,
+                        Icmpv6(_) => ip_number::IPV6_ICMP,
+                        Udp(_) => ip_number::UDP,
+                        Tcp(_) => ip_number::TCP
+                    }
+                );
+            
+                //calculate the udp checksum
+                mpls_transport_header.update_checksum_ipv6(&ip, payload)?;
+            
+                //write (will automatically calculate the checksum)
+                ip.write(writer)?;
+                ext.write(writer, ip.next_header)?;
+            }
+        }
+        mpls_transport_header.write(writer)?;
     }
     writer.write_all(payload)?;
     Ok(())
@@ -1504,6 +1748,9 @@ fn final_size<B>(builder: &PacketBuilderStep<B>, payload_size: usize) -> usize {
         Some(Udp(_)) => UdpHeader::SERIALIZED_SIZE,
         Some(Tcp(ref value)) => value.header_len() as usize,
         None => 0
+    } + match builder.state.mpls_header {
+        Some(_) => MplsHeader::SERIALIZED_SIZE,
+        None => 0,
     } + payload_size
 }
 
@@ -1520,7 +1767,10 @@ mod whitebox_tests {
                 ethernet2_header: None,
                 ip_header: None,
                 vlan_header: None,
-                transport_header: None
+                transport_header: None,
+                mpls_header: None,
+                mpls_ip_header: None,
+                mpls_transport_header: None,
             },
             _marker: marker::PhantomData::<UdpHeader>{}
         }.size(0));
@@ -1536,7 +1786,10 @@ mod whitebox_tests {
                     ethernet2_header: None,
                     ip_header: None,
                     vlan_header: None,
-                    transport_header: None
+                    transport_header: None,
+                    mpls_header: None,
+                    mpls_ip_header: None,
+                    mpls_transport_header: None,
                 },
                 _marker: marker::PhantomData::<UdpHeader>{}
             },

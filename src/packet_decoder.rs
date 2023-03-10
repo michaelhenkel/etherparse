@@ -16,6 +16,10 @@ pub struct PacketHeaders<'a> {
     pub link: Option<Ethernet2Header>,
     /// Single or double vlan headers if present.
     pub vlan: Option<VlanHeader>,
+    /// mpls header if present.
+    pub mpls: Option<MplsHeader>,
+    pub mpls_ip: Option<IpHeader>,
+    pub mpls_transport: Option<TransportHeader>,
     /// IPv4 or IPv6 header and IP extension headers if present.
     pub ip: Option<IpHeader>,
     /// TCP or UDP header if present.
@@ -74,6 +78,9 @@ impl<'a> PacketHeaders<'a> {
         let mut result = PacketHeaders{
             link: Some(ethernet),
             vlan: None,
+            mpls: None,
+            mpls_ip: None,
+            mpls_transport: None,
             ip: None,
             transport: None,
             payload: &[]
@@ -125,15 +132,37 @@ impl<'a> PacketHeaders<'a> {
                 //set the ip result & rest
                 rest = ip_ext_rest;
                 result.ip = Some(IpHeader::Version4(ip, ip_ext));
-
                 // only try to decode the transport layer if the payload
                 // is not fragmented
                 if false == fragmented {
                     //parse the transport layer
                     let (transport, transport_rest) = read_transport(ip_protocol, rest)?;
-
-                    //assign to the output
                     rest = transport_rest;
+                    if let Some(transport_header) = transport.as_ref(){
+                        match transport_header{
+                            TransportHeader::Udp ( _udp_header ) => {
+                                if _udp_header.destination_port == 6635{
+                                    let (mpls, mpls_rest) = MplsHeader::from_slice(rest)?;
+                                    rest = mpls_rest;
+                                    result.mpls = Some(mpls);
+                                    if rest.len() > 0 {
+                                        let (ip, ip_rest) = Ipv4Header::from_slice(rest)?;
+                                        let fragmented = ip.is_fragmenting_payload();
+                                        let (ip_ext, ip_protocol, ip_ext_rest) = Ipv4Extensions::from_slice(ip.protocol, ip_rest)?;
+                                        //set the ip result & rest
+                                        rest = ip_ext_rest;
+                                        result.mpls_ip = Some(IpHeader::Version4(ip, ip_ext));
+                                        if false == fragmented {
+                                            let (transport, transport_rest) = read_transport(ip_protocol, rest)?;
+                                            rest = transport_rest;
+                                            result.mpls_transport = transport;
+                                        }
+                                    }
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
                     result.transport = transport;
                 }
             },
@@ -151,8 +180,32 @@ impl<'a> PacketHeaders<'a> {
                 if false == fragmented {
                     //parse the transport layer
                     let (transport, transport_rest) = read_transport(next_header, rest)?;
-
                     rest = transport_rest;
+                    if let Some(transport_header) = transport.as_ref(){
+                        match transport_header{
+                            TransportHeader::Udp ( _udp_header ) => {
+                                if _udp_header.destination_port == 6635{
+                                    let (mpls, mpls_rest) = MplsHeader::from_slice(rest)?;
+                                    rest = mpls_rest;
+                                    result.mpls = Some(mpls);
+                                    if rest.len() > 0 {
+                                        let (ip, ip_rest) = Ipv4Header::from_slice(rest)?;
+                                        let fragmented = ip.is_fragmenting_payload();
+                                        let (ip_ext, ip_protocol, ip_ext_rest) = Ipv4Extensions::from_slice(ip.protocol, ip_rest)?;
+                                        //set the ip result & rest
+                                        rest = ip_ext_rest;
+                                        result.mpls_ip = Some(IpHeader::Version4(ip, ip_ext));
+                                        if false == fragmented {
+                                            let (transport, transport_rest) = read_transport(ip_protocol, rest)?;
+                                            rest = transport_rest;
+                                            result.mpls_transport = transport;
+                                        }
+                                    }
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
                     result.transport = transport;
                 }
 
@@ -223,6 +276,9 @@ impl<'a> PacketHeaders<'a> {
         let mut result = PacketHeaders{
             link: None,
             vlan: None,
+            mpls: None,
+            mpls_ip: None,
+            mpls_transport: None,
             ip: None,
             transport: None,
             payload: &[]
@@ -270,7 +326,6 @@ impl<'a> PacketHeaders<'a> {
                 let (ip, ip_rest) = Ipv4Header::from_slice(rest)?;
                 let fragmented = ip.is_fragmenting_payload();
                 let (ip_ext, ip_protocol, ip_ext_rest) = Ipv4Extensions::from_slice(ip.protocol, ip_rest)?;
-
                 //set the ip result & rest
                 rest = ip_ext_rest;
                 result.ip = Some(IpHeader::Version4(ip, ip_ext));
@@ -280,9 +335,32 @@ impl<'a> PacketHeaders<'a> {
                 if false == fragmented {
                     //parse the transport layer
                     let (transport, transport_rest) = read_transport(ip_protocol, rest)?;
-
-                    //assign to the output
                     rest = transport_rest;
+                    if let Some(transport_header) = transport.as_ref(){
+                        match transport_header{
+                            TransportHeader::Udp ( _udp_header ) => {
+                                if _udp_header.destination_port == 6635{
+                                    let (mpls, mpls_rest) = MplsHeader::from_slice(rest)?;
+                                    rest = mpls_rest;
+                                    result.mpls = Some(mpls);
+                                    if rest.len() > 0 {
+                                        let (ip, ip_rest) = Ipv4Header::from_slice(rest)?;
+                                        let fragmented = ip.is_fragmenting_payload();
+                                        let (ip_ext, ip_protocol, ip_ext_rest) = Ipv4Extensions::from_slice(ip.protocol, ip_rest)?;
+                                        //set the ip result & rest
+                                        rest = ip_ext_rest;
+                                        result.mpls_ip = Some(IpHeader::Version4(ip, ip_ext));
+                                        if false == fragmented {
+                                            let (transport, transport_rest) = read_transport(ip_protocol, rest)?;
+                                            rest = transport_rest;
+                                            result.mpls_transport = transport;
+                                        }
+                                    }
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
                     result.transport = transport;
                 }
             },
@@ -300,8 +378,32 @@ impl<'a> PacketHeaders<'a> {
                 if false == fragmented {
                     //parse the transport layer
                     let (transport, transport_rest) = read_transport(next_header, rest)?;
-
                     rest = transport_rest;
+                    if let Some(transport_header) = transport.as_ref(){
+                        match transport_header{
+                            TransportHeader::Udp ( _udp_header ) => {
+                                if _udp_header.destination_port == 6635{
+                                    let (mpls, mpls_rest) = MplsHeader::from_slice(rest)?;
+                                    rest = mpls_rest;
+                                    result.mpls = Some(mpls);
+                                    if rest.len() > 0 {
+                                        let (ip, ip_rest) = Ipv4Header::from_slice(rest)?;
+                                        let fragmented = ip.is_fragmenting_payload();
+                                        let (ip_ext, ip_protocol, ip_ext_rest) = Ipv4Extensions::from_slice(ip.protocol, ip_rest)?;
+                                        //set the ip result & rest
+                                        rest = ip_ext_rest;
+                                        result.mpls_ip = Some(IpHeader::Version4(ip, ip_ext));
+                                        if false == fragmented {
+                                            let (transport, transport_rest) = read_transport(ip_protocol, rest)?;
+                                            rest = transport_rest;
+                                            result.mpls_transport = transport;
+                                        }
+                                    }
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
                     result.transport = transport;
                 }
 
@@ -359,6 +461,9 @@ impl<'a> PacketHeaders<'a> {
         let mut result = PacketHeaders {
             link: None,
             vlan: None,
+            mpls: None,
+            mpls_ip: None,
+            mpls_transport: None,
             ip: None,
             transport: None,
             payload: &[],

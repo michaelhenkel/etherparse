@@ -8,6 +8,9 @@ mod packet_headers {
         let header = PacketHeaders{
             link: None,
             vlan: None,
+            mpls: None,
+            mpls_ip: None,
+            mpls_transport: None,
             ip: None,
             transport: None,
             payload: &[]
@@ -15,9 +18,10 @@ mod packet_headers {
         assert_eq!(
             &format!("{:?}", header),
             &format!(
-                "PacketHeaders {{ link: {:?}, vlan: {:?}, ip: {:?}, transport: {:?}, payload: {:?} }}",
+                "PacketHeaders {{ link: {:?}, vlan: {:?}, mpls: {:?}, ip: {:?}, transport: {:?}, payload: {:?} }}",
                 header.link,
                 header.vlan,
+                header.mpls,
                 header.ip,
                 header.transport,
                 header.payload
@@ -30,6 +34,9 @@ mod packet_headers {
         let header = PacketHeaders{
             link: None,
             vlan: None,
+            mpls: None,
+            mpls_ip: None,
+            mpls_transport: None,
             ip: None,
             transport: None,
             payload: &[]
@@ -41,6 +48,7 @@ mod packet_headers {
         #[test]
         fn payload_ether_type(
             ref eth in ethernet_2_unknown(),
+            ref mpls in mpls(),
             ref vlan_outer in vlan_single_unknown(),
             ref vlan_inner in vlan_single_unknown(),
             ref ipv4 in ipv4_unknown(),
@@ -56,6 +64,9 @@ mod packet_headers {
                 PacketHeaders{
                     link: None,
                     vlan: None,
+                    mpls: None,
+                    mpls_ip: None,
+                    mpls_transport: None,
                     ip: None,
                     transport: None,
                     payload: &[]
@@ -68,6 +79,9 @@ mod packet_headers {
                 PacketHeaders{
                     link: Some(eth.clone()),
                     vlan: None,
+                    mpls: None,
+                    mpls_ip: None,
+                    mpls_transport: None,
                     ip: None,
                     transport: None,
                     payload: &[]
@@ -80,6 +94,9 @@ mod packet_headers {
                 PacketHeaders{
                     link: Some(eth.clone()),
                     vlan: Some(Single(vlan_outer.clone())),
+                    mpls: None,
+                    mpls_ip: None,
+                    mpls_transport: None,
                     ip: None,
                     transport: None,
                     payload: &[]
@@ -99,6 +116,9 @@ mod packet_headers {
                             }
                         )
                     ),
+                    mpls: None,
+                    mpls_ip: None,
+                    mpls_transport: None,
                     ip: None,
                     transport: None,
                     payload: &[]
@@ -114,6 +134,9 @@ mod packet_headers {
                     ip: Some(
                         Version4(ipv4.clone(), Default::default())
                     ),
+                    mpls: None,
+                    mpls_ip: None,
+                    mpls_transport: None,
                     transport: None,
                     payload: &[]
                 }.payload_ether_type()
@@ -125,6 +148,30 @@ mod packet_headers {
                 PacketHeaders{
                     link: Some(eth.clone()),
                     vlan: None,
+                    mpls: None,
+                    mpls_ip: None,
+                    mpls_transport: None,
+                    ip: Some(
+                        Version4(ipv4.clone(), Default::default())
+                    ),
+                    transport: Some(
+                        Udp(udp.clone())
+                    ),
+                    payload: &[]
+                }.payload_ether_type()
+            );
+
+            // mpls present
+            assert_eq!(
+                None,
+                PacketHeaders{
+                    link: Some(eth.clone()),
+                    vlan: None,
+                    mpls: Some(
+                        mpls.clone(),
+                    ),
+                    mpls_ip: None,
+                    mpls_transport: None,
                     ip: Some(
                         Version4(ipv4.clone(), Default::default())
                     ),

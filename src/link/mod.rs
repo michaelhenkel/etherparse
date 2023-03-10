@@ -1,4 +1,5 @@
 pub mod ethernet;
+pub mod mpls;
 pub mod vlan_tagging;
 
 /// A slice containing the link layer header (currently only Ethernet II is supported).

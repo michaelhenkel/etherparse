@@ -91,6 +91,24 @@ prop_compose! {
 }
 
 prop_compose! {
+    pub(crate) fn mpls()(
+        label in prop::bits::u32::between(0,3),
+        tc in prop::bits::u8::between(0,3),
+        s in any::<bool>(),
+        ttl in  prop::bits::u8::between(0,3)
+    )
+        -> MplsHeader
+    {
+        MplsHeader {
+            label: label,
+            tc: tc,
+            s: s,
+            ttl: ttl
+        }
+    }
+}
+
+prop_compose! {
     pub(crate) fn vlan_single_with(ether_type: u16)(
         priority_code_point in prop::bits::u8::between(0,3),
         drop_eligible_indicator in any::<bool>(),

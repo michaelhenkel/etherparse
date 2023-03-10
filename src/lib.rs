@@ -255,6 +255,7 @@ mod link;
 pub use crate::link::LinkSlice;
 pub use crate::link::ethernet::*;
 pub use crate::link::vlan_tagging::*;
+pub use crate::link::mpls::*;
 
 mod internet;
 pub use crate::internet::ip::*;
@@ -615,6 +616,8 @@ pub enum ErrorField {
     VlanTagPriorityCodePoint,
     ///VlanTaggingHeader.vlan_identifier
     VlanTagVlanId,
+    MplsTc,
+    MplsLabel,
 }
 
 impl fmt::Display for ErrorField {
@@ -628,7 +631,9 @@ impl fmt::Display for ErrorField {
             Ipv6FlowLabel => write!(f, "Ipv6Header.flow_label"),
             Ipv6FragmentOffset => write!(f, "Ipv6FragmentHeader.fragment_offset"),
             VlanTagPriorityCodePoint => write!(f, "SingleVlanHeader.priority_code_point"),
-            VlanTagVlanId => write!(f, "SingleVlanHeader.vlan_identifier")
+            VlanTagVlanId => write!(f, "SingleVlanHeader.vlan_identifier"),
+            MplsTc => write!(f, "MplsHeader.tc"),
+            MplsLabel => write!(f, "MplsHeader.label")
         }
     }
 }
@@ -652,6 +657,19 @@ fn max_check_u16(value: u16, max: u16, field: ErrorField) -> Result<(), ValueErr
         Ok(())
     } else {
         Err(U16TooLarge{ 
+            value, 
+            max, 
+            field
+        })
+    }
+}
+
+fn max_check_u32(value: u32, max: u32, field: ErrorField) -> Result<(), ValueError> {
+    use crate::ValueError::U32TooLarge;
+    if value <= max {
+        Ok(())
+    } else {
+        Err(U32TooLarge{ 
             value, 
             max, 
             field

@@ -550,6 +550,8 @@ impl<'a> CursorSlice<'a> {
                      .map_err(|err| 
                         err.add_slice_offset(self.offset)
                      )?;
+        println!("SADF");
+        let (mpls, mpls_rest) = MplsHeader::from_slice(result.slice())?;
 
         //set the new data
         self.move_by_slice(result.slice());
